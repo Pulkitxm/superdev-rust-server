@@ -1,17 +1,12 @@
-use axum::{extract::Json, http::StatusCode, response::Json as ResponseJson, response::Response};
+use axum::{extract::Json, http::StatusCode, response::Json as ResponseJson};
 use solana_sdk::{
     signature::{Keypair, Signature, Signer},
     system_instruction,
 };
 use spl_token::instruction::{initialize_mint, mint_to, transfer};
 use validator::Validate;
-
 use crate::models::*;
 use crate::utils::*;
-
-fn error_response<T>(message: String) -> Result<ResponseJson<ApiResponse<T>>, StatusCode> {
-    Ok(ResponseJson(ApiResponse::error(message)))
-}
 
 pub async fn ping() -> ResponseJson<ApiResponse<String>> {
     ResponseJson(ApiResponse::success("pong".to_string()))
