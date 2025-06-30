@@ -1,450 +1,353 @@
-use axum::{
-    extract::Json,
-    http::StatusCode,
-    response::Json as JsonResponse,
-};
+use axum::{extract::Json, http::StatusCode, response::Json as ResponseJson, response::Response};
 use solana_sdk::{
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
+    signature::{Keypair, Signature, Signer},
     system_instruction,
 };
-use spl_token::instruction as token_instruction;
+use spl_token::instruction::{initialize_mint, mint_to, transfer};
 use validator::Validate;
 
 use crate::models::*;
 use crate::utils::*;
 
-// Ping endpoint for health check
-pub async fn ping() -> JsonResponse<ApiResponse<PingResponse>> {
-    JsonResponse(ApiResponse {
-        success: true,
-        data: Some(PingResponse {
-            message: "pong".to_string(),
-        }),
-        error: None,
-    })
+fn error_response<T>(message: String) -> Result<ResponseJson<ApiResponse<T>>, StatusCode> {
+    Ok(ResponseJson(ApiResponse::error(message)))
 }
 
-// Generate a new Solana keypair
-pub async fn generate_keypair() -> JsonResponse<ApiResponse<KeypairResponse>> {
+pub async fn ping() -> ResponseJson<ApiResponse<String>> {
+    ResponseJson(ApiResponse::success("pong".to_string()))
+}
+
+pub async fn generate_keypair() -> ResponseJson<ApiResponse<KeypairResponse>> {
     let keypair = Keypair::new();
-    let pubkey = pubkey_to_base58(&keypair.pubkey());
-    let secret = bs58::encode(keypair.to_bytes()).into_string();
-
-    JsonResponse(ApiResponse {
-        success: true,
-        data: Some(KeypairResponse { pubkey, secret }),
-        error: None,
-    })
+    let response = KeypairResponse {
+        pubkey: keypair.pubkey().to_string(),
+        secret: bs58::encode(keypair.to_bytes()).into_string(),
+    };
+    ResponseJson(ApiResponse::success(response))
 }
 
-// Create a new SPL token initialize mint instruction
 pub async fn create_token(
     Json(payload): Json<CreateTokenRequest>,
-) -> JsonResponse<ApiResponse<InstructionResponse>> {
-    // Validate request
-    if let Err(e) = payload.validate() {
-        return JsonResponse(ApiResponse {
-            success: false,
-            data: None,
-            error: Some(format!("Validation error: {}", e)),
-        });
+) -> Result<ResponseJson<ApiResponse<InstructionResponse>>, StatusCode> {
+    if let Err(errors) = payload.validate() {
+        return Ok(ResponseJson(ApiResponse::error(format!(
+            "Validation error: {:?}",
+            errors
+        ))));
     }
 
-    // Parse pubkeys
-    let mint_authority = match base58_to_pubkey(&payload.mint_authority) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid mint authority: {}", e)),
-            });
-        }
+    let mint_authority = match validate_pubkey(&payload.mint_authority) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    let mint = match base58_to_pubkey(&payload.mint) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid mint: {}", e)),
-            });
-        }
+    let mint = match validate_pubkey(&payload.mint) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    // Create instruction
-    let (program_id, instruction_data) = create_initialize_mint_instruction(
+    let instruction = initialize_mint(
+        &spl_token::id(),
         &mint,
-        payload.decimals,
         &mint_authority,
-    );
+        Some(&mint_authority),
+        payload.decimals,
+    )
+    .map_err(|e| {
+        return ResponseJson(ApiResponse::error(format!("Failed to create instruction: {}", e)));
+    });
 
-    let accounts = vec![
-        AccountMeta {
-            pubkey: pubkey_to_base58(&mint),
-            is_signer: false,
-            is_writable: true,
-        },
-        AccountMeta {
-            pubkey: pubkey_to_base58(&mint_authority),
-            is_signer: true,
-            is_writable: false,
-        },
-    ];
+    match instruction {
+        Ok(inst) => {
+            let accounts: Vec<crate::models::AccountMeta> = inst
+                .accounts
+                .iter()
+                .map(|acc| crate::models::AccountMeta {
+                    pubkey: acc.pubkey.to_string(),
+                    is_signer: acc.is_signer,
+                    is_writable: acc.is_writable,
+                })
+                .collect();
 
-    JsonResponse(ApiResponse {
-        success: true,
-        data: Some(InstructionResponse {
-            program_id: pubkey_to_base58(&program_id),
-            accounts,
-            instruction_data: bytes_to_base64(&instruction_data),
-        }),
-        error: None,
-    })
+            let response = InstructionResponse {
+                program_id: inst.program_id.to_string(),
+                accounts,
+                instruction_data: encode_base64(&inst.data),
+            };
+
+            Ok(ResponseJson(ApiResponse::success(response)))
+        }
+        Err(response) => Ok(response),
+    }
 }
 
-// Create a mint-to instruction for SPL tokens
 pub async fn mint_token(
     Json(payload): Json<MintTokenRequest>,
-) -> JsonResponse<ApiResponse<InstructionResponse>> {
-    // Validate request
-    if let Err(e) = payload.validate() {
-        return JsonResponse(ApiResponse {
-            success: false,
-            data: None,
-            error: Some(format!("Validation error: {}", e)),
-        });
+) -> Result<ResponseJson<ApiResponse<InstructionResponse>>, StatusCode> {
+    if let Err(errors) = payload.validate() {
+        return Ok(ResponseJson(ApiResponse::error(format!(
+            "Validation error: {:?}",
+            errors
+        ))));
     }
 
-    // Parse pubkeys
-    let mint = match base58_to_pubkey(&payload.mint) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid mint: {}", e)),
-            });
-        }
+    let mint = match validate_pubkey(&payload.mint) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    let destination = match base58_to_pubkey(&payload.destination) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid destination: {}", e)),
-            });
-        }
+    let destination = match validate_pubkey(&payload.destination) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    let authority = match base58_to_pubkey(&payload.authority) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid authority: {}", e)),
-            });
-        }
+    let authority = match validate_pubkey(&payload.authority) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    // Create instruction
-    let (program_id, instruction_data) = create_mint_instruction(
+    let instruction = mint_to(
+        &spl_token::id(),
         &mint,
         &destination,
         &authority,
+        &[],
         payload.amount,
-    );
+    )
+    .map_err(|e| {
+        return ResponseJson(ApiResponse::error(format!("Failed to create instruction: {}", e)));
+    });
 
-    let accounts = vec![
-        AccountMeta {
-            pubkey: pubkey_to_base58(&mint),
-            is_signer: false,
-            is_writable: true,
-        },
-        AccountMeta {
-            pubkey: pubkey_to_base58(&destination),
-            is_signer: false,
-            is_writable: true,
-        },
-        AccountMeta {
-            pubkey: pubkey_to_base58(&authority),
-            is_signer: true,
-            is_writable: false,
-        },
-    ];
+    match instruction {
+        Ok(inst) => {
+            let accounts: Vec<crate::models::AccountMeta> = inst
+                .accounts
+                .iter()
+                .map(|acc| crate::models::AccountMeta {
+                    pubkey: acc.pubkey.to_string(),
+                    is_signer: acc.is_signer,
+                    is_writable: acc.is_writable,
+                })
+                .collect();
 
-    JsonResponse(ApiResponse {
-        success: true,
-        data: Some(InstructionResponse {
-            program_id: pubkey_to_base58(&program_id),
-            accounts,
-            instruction_data: bytes_to_base64(&instruction_data),
-        }),
-        error: None,
-    })
+            let response = InstructionResponse {
+                program_id: inst.program_id.to_string(),
+                accounts,
+                instruction_data: encode_base64(&inst.data),
+            };
+
+            Ok(ResponseJson(ApiResponse::success(response)))
+        }
+        Err(response) => Ok(response),
+    }
 }
 
-// Sign a message using a private key
 pub async fn sign_message(
     Json(payload): Json<SignMessageRequest>,
-) -> JsonResponse<ApiResponse<SignMessageResponse>> {
-    // Validate request
-    if let Err(e) = payload.validate() {
-        return JsonResponse(ApiResponse {
-            success: false,
-            data: None,
-            error: Some(format!("Validation error: {}", e)),
-        });
+) -> Result<ResponseJson<ApiResponse<SignMessageResponse>>, StatusCode> {
+    if let Err(errors) = payload.validate() {
+        return Ok(ResponseJson(ApiResponse::error(format!(
+            "Validation error: {:?}",
+            errors
+        ))));
     }
 
-    // Parse keypair
-    let keypair = match base58_to_keypair(&payload.secret) {
+    let secret_bytes = match validate_base58(&payload.secret) {
+        Ok(bytes) => bytes,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
+    };
+
+    if secret_bytes.len() != 64 {
+        return Ok(ResponseJson(ApiResponse::error(
+            "Invalid secret key length".to_string(),
+        )));
+    }
+
+    let keypair = match Keypair::from_bytes(&secret_bytes) {
         Ok(kp) => kp,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid secret key: {}", e)),
-            });
+        Err(_) => {
+            return Ok(ResponseJson(ApiResponse::error(
+                "Invalid secret key format".to_string(),
+            )))
         }
     };
 
-    // Sign message
     let message_bytes = payload.message.as_bytes();
     let signature = keypair.sign_message(message_bytes);
-    let signature_base64 = bytes_to_base64(&signature.as_ref());
 
-    JsonResponse(ApiResponse {
-        success: true,
-        data: Some(SignMessageResponse {
-            signature: signature_base64,
-            public_key: pubkey_to_base58(&keypair.pubkey()),
-            message: payload.message,
-        }),
-        error: None,
-    })
+    let response = SignMessageResponse {
+        signature: encode_base64(&signature.as_ref()),
+        public_key: keypair.pubkey().to_string(),
+        message: payload.message,
+    };
+
+    Ok(ResponseJson(ApiResponse::success(response)))
 }
 
-// Verify a signed message
 pub async fn verify_message(
     Json(payload): Json<VerifyMessageRequest>,
-) -> JsonResponse<ApiResponse<VerifyMessageResponse>> {
-    // Validate request
-    if let Err(e) = payload.validate() {
-        return JsonResponse(ApiResponse {
-            success: false,
-            data: None,
-            error: Some(format!("Validation error: {}", e)),
-        });
+) -> Result<ResponseJson<ApiResponse<VerifyMessageResponse>>, StatusCode> {
+    if let Err(errors) = payload.validate() {
+        return Ok(ResponseJson(ApiResponse::error(format!(
+            "Validation error: {:?}",
+            errors
+        ))));
     }
 
-    // Parse pubkey
-    let pubkey = match base58_to_pubkey(&payload.pubkey) {
+    let pubkey = match validate_pubkey(&payload.pubkey) {
         Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid public key: {}", e)),
-            });
-        }
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    // Parse signature
-    let signature_bytes = match base64_to_bytes(&payload.signature) {
+    let signature_bytes = match decode_base64(&payload.signature) {
         Ok(bytes) => bytes,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid signature: {}", e)),
-            });
-        }
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    let signature = match solana_sdk::signature::Signature::try_from(signature_bytes.as_slice()) {
+    if signature_bytes.len() != 64 {
+        return Ok(ResponseJson(ApiResponse::error(
+            "Invalid signature length".to_string(),
+        )));
+    }
+
+    let signature = match Signature::try_from(signature_bytes.as_slice()) {
         Ok(sig) => sig,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid signature format: {}", e)),
-            });
+        Err(_) => {
+            return Ok(ResponseJson(ApiResponse::error(
+                "Invalid signature format".to_string(),
+            )))
         }
     };
 
-    // Verify signature
     let message_bytes = payload.message.as_bytes();
-    let valid = signature.verify(pubkey.as_ref(), message_bytes);
+    let is_valid = signature.verify(&pubkey.to_bytes(), message_bytes);
 
-    JsonResponse(ApiResponse {
-        success: true,
-        data: Some(VerifyMessageResponse {
-            valid,
-            message: payload.message,
-            pubkey: payload.pubkey,
-        }),
-        error: None,
-    })
+    let response = VerifyMessageResponse {
+        valid: is_valid,
+        message: payload.message,
+        pubkey: payload.pubkey,
+    };
+
+    Ok(ResponseJson(ApiResponse::success(response)))
 }
 
-// Create a SOL transfer instruction
 pub async fn send_sol(
     Json(payload): Json<SendSolRequest>,
-) -> JsonResponse<ApiResponse<InstructionResponse>> {
-    // Validate request
-    if let Err(e) = payload.validate() {
-        return JsonResponse(ApiResponse {
-            success: false,
-            data: None,
-            error: Some(format!("Validation error: {}", e)),
-        });
+) -> Result<ResponseJson<ApiResponse<SendSolResponse>>, StatusCode> {
+    if let Err(errors) = payload.validate() {
+        return Ok(ResponseJson(ApiResponse::error(format!(
+            "Validation error: {:?}",
+            errors
+        ))));
     }
 
-    // Parse pubkeys
-    let from = match base58_to_pubkey(&payload.from) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid from address: {}", e)),
-            });
-        }
+    let from = match validate_pubkey(&payload.from) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    let to = match base58_to_pubkey(&payload.to) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid to address: {}", e)),
-            });
-        }
+    let to = match validate_pubkey(&payload.to) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    // Create instruction
-    let (program_id, instruction_data) = create_transfer_instruction(
-        &from,
-        &to,
-        payload.lamports,
-    );
+    if payload.lamports == 0 {
+        return Ok(ResponseJson(ApiResponse::error(
+            "Amount must be greater than 0".to_string(),
+        )));
+    }
 
-    let accounts = vec![
-        AccountMeta {
-            pubkey: pubkey_to_base58(&from),
-            is_signer: true,
-            is_writable: true,
-        },
-        AccountMeta {
-            pubkey: pubkey_to_base58(&to),
-            is_signer: false,
-            is_writable: true,
-        },
-    ];
+    if from == to {
+        return Ok(ResponseJson(ApiResponse::error(
+            "Cannot send to the same address".to_string(),
+        )));
+    }
 
-    JsonResponse(ApiResponse {
-        success: true,
-        data: Some(InstructionResponse {
-            program_id: pubkey_to_base58(&program_id),
-            accounts,
-            instruction_data: bytes_to_base64(&instruction_data),
-        }),
-        error: None,
-    })
+    let instruction = system_instruction::transfer(&from, &to, payload.lamports);
+
+    let response = SendSolResponse {
+        program_id: instruction.program_id.to_string(),
+        accounts: instruction
+            .accounts
+            .iter()
+            .map(|acc| acc.pubkey.to_string())
+            .collect(),
+        instruction_data: encode_base64(&instruction.data),
+    };
+
+    Ok(ResponseJson(ApiResponse::success(response)))
 }
 
-// Create an SPL token transfer instruction
 pub async fn send_token(
     Json(payload): Json<SendTokenRequest>,
-) -> JsonResponse<ApiResponse<InstructionResponse>> {
-    // Validate request
-    if let Err(e) = payload.validate() {
-        return JsonResponse(ApiResponse {
-            success: false,
-            data: None,
-            error: Some(format!("Validation error: {}", e)),
-        });
+) -> Result<ResponseJson<ApiResponse<SendTokenResponse>>, StatusCode> {
+    if let Err(errors) = payload.validate() {
+        return Ok(ResponseJson(ApiResponse::error(format!(
+            "Validation error: {:?}",
+            errors
+        ))));
     }
 
-    // Parse pubkeys
-    let destination = match base58_to_pubkey(&payload.destination) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid destination: {}", e)),
-            });
-        }
+    let destination = match validate_pubkey(&payload.destination) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    let mint = match base58_to_pubkey(&payload.mint) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid mint: {}", e)),
-            });
-        }
+    let mint = match validate_pubkey(&payload.mint) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    let owner = match base58_to_pubkey(&payload.owner) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return JsonResponse(ApiResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Invalid owner: {}", e)),
-            });
-        }
+    let owner = match validate_pubkey(&payload.owner) {
+        Ok(pubkey) => pubkey,
+        Err(e) => return Ok(ResponseJson(ApiResponse::error(e))),
     };
 
-    // For token transfer, we need source and destination token accounts
-    // Since we don't have the source account in the request, we'll create a placeholder
-    // In a real implementation, you'd need to derive the source account from owner + mint
-    let source = owner; // This is a simplification
+    if payload.amount == 0 {
+        return Ok(ResponseJson(ApiResponse::error(
+            "Amount must be greater than 0".to_string(),
+        )));
+    }
 
-    // Create instruction
-    let (program_id, instruction_data) = create_token_transfer_instruction(
-        &source,
+    let source_ata = spl_associated_token_account::get_associated_token_address(&owner, &mint);
+    
+    if source_ata == destination {
+        return Ok(ResponseJson(ApiResponse::error(
+            "Cannot send to the same token account".to_string(),
+        )));
+    }
+
+    let instruction = transfer(
+        &spl_token::id(),
+        &source_ata,
         &destination,
         &owner,
+        &[],
         payload.amount,
-    );
+    )
+    .map_err(|e| {
+        return ResponseJson(ApiResponse::error(format!("Failed to create instruction: {}", e)));
+    });
 
-    let accounts = vec![
-        AccountMeta {
-            pubkey: pubkey_to_base58(&source),
-            is_signer: false,
-            is_writable: true,
-        },
-        AccountMeta {
-            pubkey: pubkey_to_base58(&destination),
-            is_signer: false,
-            is_writable: true,
-        },
-        AccountMeta {
-            pubkey: pubkey_to_base58(&owner),
-            is_signer: true,
-            is_writable: false,
-        },
-    ];
+    match instruction {
+        Ok(inst) => {
+            let accounts: Vec<SendTokenAccountMeta> = inst
+                .accounts
+                .iter()
+                .map(|acc| SendTokenAccountMeta {
+                    pubkey: acc.pubkey.to_string(),
+                    is_signer: acc.is_signer,
+                })
+                .collect();
 
-    JsonResponse(ApiResponse {
-        success: true,
-        data: Some(InstructionResponse {
-            program_id: pubkey_to_base58(&program_id),
-            accounts,
-            instruction_data: bytes_to_base64(&instruction_data),
-        }),
-        error: None,
-    })
-} 
+            let response = SendTokenResponse {
+                program_id: inst.program_id.to_string(),
+                accounts,
+                instruction_data: encode_base64(&inst.data),
+            };
+
+            Ok(ResponseJson(ApiResponse::success(response)))
+        }
+        Err(response) => Ok(response),
+    }
+}
