@@ -1,0 +1,36 @@
+[package]
+name = "solana-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Solana dependencies
+solana-sdk = "1.17"
+solana-program = "1.17"
+spl-token = "4.0"
+spl-associated-token-account = "2.2"
+
+# Encoding
+bs58 = "0.5"
+base64 = "0.21"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Validation
+validator = { version = "0.16", features = ["derive"] }
