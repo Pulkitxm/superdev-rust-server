@@ -78,7 +78,7 @@ pub fn create_mint_instruction(
         authority,
         &[],
         amount,
-    );
+    ).unwrap();
     (instruction.program_id, instruction.data)
 }
 
@@ -96,7 +96,7 @@ pub fn create_token_transfer_instruction(
         owner,
         &[],
         amount,
-    );
+    ).unwrap();
     (instruction.program_id, instruction.data)
 }
 
@@ -112,6 +112,6 @@ pub fn create_initialize_mint_instruction(
         mint_authority,
         Some(mint_authority),
         decimals,
-    );
+    ).unwrap();
     (instruction.program_id, instruction.data)
 } 

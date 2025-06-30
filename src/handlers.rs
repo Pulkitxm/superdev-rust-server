@@ -20,11 +20,11 @@ pub async fn generate_keypair() -> JsonResponse<ApiResponse<KeypairResponse>> {
     let pubkey = pubkey_to_base58(&keypair.pubkey());
     let secret = bs58::encode(keypair.to_bytes()).into_string();
 
-    JsonResponse(Json(ApiResponse {
+    JsonResponse(ApiResponse {
         success: true,
         data: Some(KeypairResponse { pubkey, secret }),
         error: None,
-    }))
+    })
 }
 
 // Create a new SPL token initialize mint instruction
@@ -33,33 +33,33 @@ pub async fn create_token(
 ) -> JsonResponse<ApiResponse<InstructionResponse>> {
     // Validate request
     if let Err(e) = payload.validate() {
-        return JsonResponse(Json(ApiResponse {
+        return JsonResponse(ApiResponse {
             success: false,
             data: None,
             error: Some(format!("Validation error: {}", e)),
-        }));
+        });
     }
 
     // Parse pubkeys
     let mint_authority = match base58_to_pubkey(&payload.mint_authority) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid mint authority: {}", e)),
-            }));
+            });
         }
     };
 
     let mint = match base58_to_pubkey(&payload.mint) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid mint: {}", e)),
-            }));
+            });
         }
     };
 
@@ -83,7 +83,7 @@ pub async fn create_token(
         },
     ];
 
-    JsonResponse(Json(ApiResponse {
+    JsonResponse(ApiResponse {
         success: true,
         data: Some(InstructionResponse {
             program_id: pubkey_to_base58(&program_id),
@@ -91,7 +91,7 @@ pub async fn create_token(
             instruction_data: bytes_to_base64(&instruction_data),
         }),
         error: None,
-    }))
+    })
 }
 
 // Create a mint-to instruction for SPL tokens
@@ -100,44 +100,44 @@ pub async fn mint_token(
 ) -> JsonResponse<ApiResponse<InstructionResponse>> {
     // Validate request
     if let Err(e) = payload.validate() {
-        return JsonResponse(Json(ApiResponse {
+        return JsonResponse(ApiResponse {
             success: false,
             data: None,
             error: Some(format!("Validation error: {}", e)),
-        }));
+        });
     }
 
     // Parse pubkeys
     let mint = match base58_to_pubkey(&payload.mint) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid mint: {}", e)),
-            }));
+            });
         }
     };
 
     let destination = match base58_to_pubkey(&payload.destination) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid destination: {}", e)),
-            }));
+            });
         }
     };
 
     let authority = match base58_to_pubkey(&payload.authority) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid authority: {}", e)),
-            }));
+            });
         }
     };
 
@@ -167,7 +167,7 @@ pub async fn mint_token(
         },
     ];
 
-    JsonResponse(Json(ApiResponse {
+    JsonResponse(ApiResponse {
         success: true,
         data: Some(InstructionResponse {
             program_id: pubkey_to_base58(&program_id),
@@ -175,7 +175,7 @@ pub async fn mint_token(
             instruction_data: bytes_to_base64(&instruction_data),
         }),
         error: None,
-    }))
+    })
 }
 
 // Sign a message using a private key
@@ -184,31 +184,31 @@ pub async fn sign_message(
 ) -> JsonResponse<ApiResponse<SignMessageResponse>> {
     // Validate request
     if let Err(e) = payload.validate() {
-        return JsonResponse(Json(ApiResponse {
+        return JsonResponse(ApiResponse {
             success: false,
             data: None,
             error: Some(format!("Validation error: {}", e)),
-        }));
+        });
     }
 
     // Parse keypair
     let keypair = match base58_to_keypair(&payload.secret) {
         Ok(kp) => kp,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid secret key: {}", e)),
-            }));
+            });
         }
     };
 
     // Sign message
     let message_bytes = payload.message.as_bytes();
     let signature = keypair.sign_message(message_bytes);
-    let signature_base64 = bytes_to_base64(&signature.to_bytes());
+    let signature_base64 = bytes_to_base64(&signature.as_ref());
 
-    JsonResponse(Json(ApiResponse {
+    JsonResponse(ApiResponse {
         success: true,
         data: Some(SignMessageResponse {
             signature: signature_base64,
@@ -216,7 +216,7 @@ pub async fn sign_message(
             message: payload.message,
         }),
         error: None,
-    }))
+    })
 }
 
 // Verify a signed message
@@ -225,22 +225,22 @@ pub async fn verify_message(
 ) -> JsonResponse<ApiResponse<VerifyMessageResponse>> {
     // Validate request
     if let Err(e) = payload.validate() {
-        return JsonResponse(Json(ApiResponse {
+        return JsonResponse(ApiResponse {
             success: false,
             data: None,
             error: Some(format!("Validation error: {}", e)),
-        }));
+        });
     }
 
     // Parse pubkey
     let pubkey = match base58_to_pubkey(&payload.pubkey) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid public key: {}", e)),
-            }));
+            });
         }
     };
 
@@ -248,30 +248,30 @@ pub async fn verify_message(
     let signature_bytes = match base64_to_bytes(&payload.signature) {
         Ok(bytes) => bytes,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid signature: {}", e)),
-            }));
+            });
         }
     };
 
     let signature = match solana_sdk::signature::Signature::try_from(signature_bytes.as_slice()) {
         Ok(sig) => sig,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid signature format: {}", e)),
-            }));
+            });
         }
     };
 
     // Verify signature
     let message_bytes = payload.message.as_bytes();
-    let valid = signature.verify(&pubkey, message_bytes).is_ok();
+    let valid = signature.verify(pubkey.as_ref(), message_bytes);
 
-    JsonResponse(Json(ApiResponse {
+    JsonResponse(ApiResponse {
         success: true,
         data: Some(VerifyMessageResponse {
             valid,
@@ -279,7 +279,7 @@ pub async fn verify_message(
             pubkey: payload.pubkey,
         }),
         error: None,
-    }))
+    })
 }
 
 // Create a SOL transfer instruction
@@ -288,33 +288,33 @@ pub async fn send_sol(
 ) -> JsonResponse<ApiResponse<InstructionResponse>> {
     // Validate request
     if let Err(e) = payload.validate() {
-        return JsonResponse(Json(ApiResponse {
+        return JsonResponse(ApiResponse {
             success: false,
             data: None,
             error: Some(format!("Validation error: {}", e)),
-        }));
+        });
     }
 
     // Parse pubkeys
     let from = match base58_to_pubkey(&payload.from) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid from address: {}", e)),
-            }));
+            });
         }
     };
 
     let to = match base58_to_pubkey(&payload.to) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid to address: {}", e)),
-            }));
+            });
         }
     };
 
@@ -338,7 +338,7 @@ pub async fn send_sol(
         },
     ];
 
-    JsonResponse(Json(ApiResponse {
+    JsonResponse(ApiResponse {
         success: true,
         data: Some(InstructionResponse {
             program_id: pubkey_to_base58(&program_id),
@@ -346,7 +346,7 @@ pub async fn send_sol(
             instruction_data: bytes_to_base64(&instruction_data),
         }),
         error: None,
-    }))
+    })
 }
 
 // Create an SPL token transfer instruction
@@ -355,44 +355,44 @@ pub async fn send_token(
 ) -> JsonResponse<ApiResponse<InstructionResponse>> {
     // Validate request
     if let Err(e) = payload.validate() {
-        return JsonResponse(Json(ApiResponse {
+        return JsonResponse(ApiResponse {
             success: false,
             data: None,
             error: Some(format!("Validation error: {}", e)),
-        }));
+        });
     }
 
     // Parse pubkeys
     let destination = match base58_to_pubkey(&payload.destination) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid destination: {}", e)),
-            }));
+            });
         }
     };
 
     let mint = match base58_to_pubkey(&payload.mint) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid mint: {}", e)),
-            }));
+            });
         }
     };
 
     let owner = match base58_to_pubkey(&payload.owner) {
         Ok(pk) => pk,
         Err(e) => {
-            return JsonResponse(Json(ApiResponse {
+            return JsonResponse(ApiResponse {
                 success: false,
                 data: None,
                 error: Some(format!("Invalid owner: {}", e)),
-            }));
+            });
         }
     };
 
@@ -427,7 +427,7 @@ pub async fn send_token(
         },
     ];
 
-    JsonResponse(Json(ApiResponse {
+    JsonResponse(ApiResponse {
         success: true,
         data: Some(InstructionResponse {
             program_id: pubkey_to_base58(&program_id),
@@ -435,5 +435,5 @@ pub async fn send_token(
             instruction_data: bytes_to_base64(&instruction_data),
         }),
         error: None,
-    }))
+    })
 } 
