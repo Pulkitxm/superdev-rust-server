@@ -2,7 +2,7 @@ use axum::{
     extract::Json,
     http::StatusCode,
     response::Json as JsonResponse,
-    routing::{post},
+    routing::{post, get},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ async fn main() {
 
     // Build our application with a route
     let app = Router::new()
+        .route("/ping", get(ping))
         .route("/keypair", post(generate_keypair))
         .route("/token/create", post(create_token))
         .route("/token/mint", post(mint_token))

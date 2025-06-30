@@ -14,6 +14,17 @@ use validator::Validate;
 use crate::models::*;
 use crate::utils::*;
 
+// Ping endpoint for health check
+pub async fn ping() -> JsonResponse<ApiResponse<PingResponse>> {
+    JsonResponse(ApiResponse {
+        success: true,
+        data: Some(PingResponse {
+            message: "pong".to_string(),
+        }),
+        error: None,
+    })
+}
+
 // Generate a new Solana keypair
 pub async fn generate_keypair() -> JsonResponse<ApiResponse<KeypairResponse>> {
     let keypair = Keypair::new();

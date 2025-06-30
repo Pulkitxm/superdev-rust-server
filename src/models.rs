@@ -11,6 +11,12 @@ pub struct ApiResponse<T> {
     pub error: Option<String>,
 }
 
+// Ping response
+#[derive(Serialize)]
+pub struct PingResponse {
+    pub message: String,
+}
+
 // Keypair response
 #[derive(Serialize)]
 pub struct KeypairResponse {
